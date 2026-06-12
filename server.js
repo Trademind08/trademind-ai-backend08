@@ -2,8 +2,8 @@ import dotenv from "dotenv";
 dotenv.config();
 
 import express from "express";
-import cors from "cors";
 import multer from "multer";
+import cors from "cors";
 import OpenAI from "openai";
 
 const app = express();
@@ -14,7 +14,7 @@ app.use(express.json({ limit: "30mb" }));
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
-    fileSize: 12 * 1024 * 1024,
+    fileSize: 10 * 1024 * 1024,
   },
 });
 
@@ -22,9 +22,82 @@ const client = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-const PORT = process.env.PORT || 10000;
-const ENGINE_VERSION = "trademind-institutional-final-v5";
-const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
+const PORT = process.env.PORT || 3000;
+const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
+
+const ENGINE_VERSION = "trademind-institutional-v3.1-premium";
+
+const ANALYSIS_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "market_type",
+    "symbol",
+    "signal",
+    "confidence",
+    "ai_score",
+    "setup_quality",
+    "risk_level",
+    "market_context",
+    "trend",
+    "liquidity_reading",
+    "entry_zone",
+    "stop_loss",
+    "take_profit_1",
+    "take_profit_2",
+    "invalidation_zone",
+    "confirmation",
+    "execution_trigger",
+    "missing_confirmation",
+    "no_trade_condition",
+    "reading",
+    "institutional_summary",
+    "risk_note",
+  ],
+  properties: {
+    market_type: {
+      type: "string",
+      enum: ["FUTURES", "FOREX", "CRYPTO", "STOCKS", "UNKNOWN"],
+    },
+    symbol: { type: "string" },
+    signal: {
+      type: "string",
+      enum: ["BUY", "SELL", "NEUTRAL"],
+    },
+    confidence: {
+      type: "string",
+      enum: ["Alta", "Media", "Baja"],
+    },
+    ai_score: {
+      type: "integer",
+      minimum: 0,
+      maximum: 100,
+    },
+    setup_quality: {
+      type: "string",
+      enum: ["A", "B", "C", "NO TRADE"],
+    },
+    risk_level: {
+      type: "string",
+      enum: ["Bajo", "Medio", "Alto"],
+    },
+    market_context: { type: "string" },
+    trend: { type: "string" },
+    liquidity_reading: { type: "string" },
+    entry_zone: { type: "string" },
+    stop_loss: { type: "string" },
+    take_profit_1: { type: "string" },
+    take_profit_2: { type: "string" },
+    invalidation_zone: { type: "string" },
+    confirmation: { type: "string" },
+    execution_trigger: { type: "string" },
+    missing_confirmation: { type: "string" },
+    no_trade_condition: { type: "string" },
+    reading: { type: "string" },
+    institutional_summary: { type: "string" },
+    risk_note: { type: "string" },
+  },
+};
 
 function normalizeText(value) {
   return String(value || "").trim();
@@ -44,22 +117,57 @@ function badValue(value) {
     text === "null" ||
     text === "undefined" ||
     text.includes("no aplicable") ||
-    text.includes("sin definir") ||
-    text.includes("sin confirmar") ||
-    text.includes("no definido") ||
     text.includes("no hay entrada") ||
-    text.includes("no se puede")
+    text.includes("no se puede") ||
+    text.includes("sin definir") ||
+    text.includes("no definido")
   );
+}
+
+function extractPrices(text) {
+  if (!text) return [];
+
+  const matches = String(text).match(/\d+(?:\.\d+)?/g);
+
+  if (!matches) return [];
+
+  return matches
+    .map(Number)
+    .filter((value) => Number.isFinite(value) && value > 0);
+}
+
+function average(prices) {
+  if (!prices.length) return null;
+
+  return prices.reduce((a, b) => a + b, 0) / prices.length;
+}
+
+function clampScore(value) {
+  const score = Number(value);
+
+  if (Number.isNaN(score)) return 58;
+
+  return Math.max(0, Math.min(100, Math.round(score)));
 }
 
 function normalizeSignal(value) {
   const text = normalizeText(value).toUpperCase();
 
-  if (text.includes("BUY") || text.includes("COMPRA") || text.includes("ALCISTA")) {
+  if (
+    text.includes("BUY") ||
+    text.includes("COMPRA") ||
+    text.includes("ALCISTA") ||
+    text.includes("LONG")
+  ) {
     return "BUY";
   }
 
-  if (text.includes("SELL") || text.includes("VENTA") || text.includes("BAJISTA")) {
+  if (
+    text.includes("SELL") ||
+    text.includes("VENTA") ||
+    text.includes("BAJISTA") ||
+    text.includes("SHORT")
+  ) {
     return "SELL";
   }
 
@@ -69,8 +177,8 @@ function normalizeSignal(value) {
 function normalizeMarketType(value) {
   const text = normalizeText(value).toUpperCase();
 
-  if (text.includes("FOREX") || text.includes("FX")) return "FOREX";
   if (text.includes("FUTURE")) return "FUTURES";
+  if (text.includes("FOREX") || text.includes("FX")) return "FOREX";
   if (text.includes("CRYPTO")) return "CRYPTO";
   if (text.includes("STOCK")) return "STOCKS";
 
@@ -80,32 +188,27 @@ function normalizeMarketType(value) {
 function inferMarketTypeFromSymbol(symbol = "") {
   const s = normalizeText(symbol).toUpperCase().replace("/", "");
 
-  const futures = ["MNQ", "NQ", "MES", "ES", "YM", "MYM", "RTY", "M2K", "CL", "GC", "MGC"];
-  const forex = ["EURUSD", "GBPUSD", "USDJPY", "USDCAD", "USDCHF", "AUDUSD", "NZDUSD", "EURJPY", "GBPJPY", "XAUUSD", "XAGUSD"];
-  const crypto = ["BTCUSD", "BTCUSDT", "ETHUSD", "ETHUSDT", "SOLUSD", "XRPUSD"];
+  const futures = ["MNQ", "NQ", "ES", "MES", "YM", "MYM", "RTY", "M2K"];
+  const forex = [
+    "EURUSD",
+    "GBPUSD",
+    "USDJPY",
+    "USDCHF",
+    "USDCAD",
+    "AUDUSD",
+    "NZDUSD",
+    "EURJPY",
+    "GBPJPY",
+    "XAUUSD",
+    "XAGUSD",
+  ];
+  const crypto = ["BTCUSD", "ETHUSD", "SOLUSD", "XRPUSD", "BTCUSDT", "ETHUSDT"];
 
   if (futures.includes(s)) return "FUTURES";
   if (forex.includes(s)) return "FOREX";
   if (crypto.includes(s)) return "CRYPTO";
 
   return "UNKNOWN";
-}
-
-function extractPrices(text) {
-  if (!text) return [];
-  const matches = String(text).match(/\d+(\.\d+)?/g);
-  return matches ? matches.map(Number) : [];
-}
-
-function average(values) {
-  if (!values.length) return null;
-  return values.reduce((a, b) => a + b, 0) / values.length;
-}
-
-function clampScore(value) {
-  const score = Number(value);
-  if (Number.isNaN(score)) return 58;
-  return Math.max(0, Math.min(100, Math.round(score)));
 }
 
 function getPriceDecimals(symbol = "", marketType = "", price = null) {
@@ -115,6 +218,8 @@ function getPriceDecimals(symbol = "", marketType = "", price = null) {
   if (s.includes("JPY")) return 3;
   if (s === "XAUUSD" || s === "XAGUSD") return 2;
   if (type === "FOREX") return 5;
+  if (type === "CRYPTO") return 2;
+  if (type === "FUTURES") return 2;
   if (price && price > 0 && price < 100) return 5;
 
   return 2;
@@ -128,6 +233,24 @@ function formatPrice(price, symbol = "", marketType = "") {
   return Number(price).toFixed(getPriceDecimals(symbol, marketType, price));
 }
 
+function normalizePriceField(value, symbol = "", marketType = "") {
+  if (badValue(value)) return value;
+
+  const prices = extractPrices(value);
+
+  if (!prices.length) return value;
+
+  const formattedPrices = prices
+    .map((price) => formatPrice(price, symbol, marketType))
+    .filter(Boolean);
+
+  if (!formattedPrices.length) return value;
+
+  if (formattedPrices.length === 1) return formattedPrices[0];
+
+  return formattedPrices.join(" - ");
+}
+
 function getDefaultBuffer(entryPrice, symbol = "", marketType = "") {
   const s = normalizeText(symbol).toUpperCase().replace("/", "");
   const type = normalizeMarketType(marketType);
@@ -136,6 +259,7 @@ function getDefaultBuffer(entryPrice, symbol = "", marketType = "") {
   if (s.includes("JPY")) return 0.15;
   if (type === "FOREX") return 0.0012;
   if (type === "CRYPTO") return entryPrice ? entryPrice * 0.006 : 50;
+  if (type === "FUTURES") return 25;
 
   return 25;
 }
@@ -145,6 +269,7 @@ function safeJsonParse(text) {
     return JSON.parse(text);
   } catch (_) {
     const match = String(text || "").match(/\{[\s\S]*\}/);
+
     if (!match) return {};
 
     try {
@@ -187,17 +312,17 @@ function normalizeRiskLevel(value, aiScore) {
   if (text.includes("medio")) return "Medio";
   if (text.includes("alto")) return "Alto";
 
-  if (aiScore >= 75) return "Medio";
   if (aiScore >= 55) return "Medio";
 
   return "Alto";
 }
 
 function forceDirectionalSignal(analysis = {}) {
-  const current = normalizeSignal(analysis.signal);
-  if (current !== "NEUTRAL") return current;
+  const rawSignal = normalizeSignal(analysis.signal);
 
-  const text = [
+  if (rawSignal !== "NEUTRAL") return rawSignal;
+
+  const combined = [
     analysis.market_context,
     analysis.trend,
     analysis.liquidity_reading,
@@ -214,35 +339,38 @@ function forceDirectionalSignal(analysis = {}) {
     "alcista",
     "buy",
     "compra",
+    "long",
     "soporte",
-    "demanda",
-    "demand",
-    "ruptura alcista",
+    "retesteó soporte",
     "rechazo alcista",
+    "ruptura alcista",
     "bos alcista",
     "choch alcista",
     "higher low",
+    "demanda",
+    "demand",
   ];
 
   const bearishWords = [
     "bajista",
     "sell",
     "venta",
+    "short",
     "resistencia",
-    "oferta",
-    "supply",
-    "ruptura bajista",
     "rechazo bajista",
+    "ruptura bajista",
     "bos bajista",
     "choch bajista",
     "lower high",
+    "oferta",
+    "supply",
   ];
 
-  const bull = bullishWords.filter((w) => text.includes(w)).length;
-  const bear = bearishWords.filter((w) => text.includes(w)).length;
+  const bullishScore = bullishWords.filter((w) => combined.includes(w)).length;
+  const bearishScore = bearishWords.filter((w) => combined.includes(w)).length;
 
-  if (bull >= bear + 1) return "BUY";
-  if (bear >= bull + 1) return "SELL";
+  if (bullishScore >= bearishScore + 1) return "BUY";
+  if (bearishScore >= bullishScore + 1) return "SELL";
 
   return "NEUTRAL";
 }
@@ -250,7 +378,10 @@ function forceDirectionalSignal(analysis = {}) {
 function forceAnalysis(input = {}, metadata = {}) {
   const analysis = input && typeof input === "object" ? input : {};
 
-  const symbol = normalizeText(analysis.symbol || metadata.symbol || "UNKNOWN").toUpperCase();
+  const symbol = normalizeText(
+    analysis.symbol || metadata.symbol || "UNKNOWN"
+  ).toUpperCase();
+
   const requestedMarketType = normalizeMarketType(metadata.marketType);
   const modelMarketType = normalizeMarketType(analysis.market_type);
   const inferredMarketType = inferMarketTypeFromSymbol(symbol);
@@ -262,12 +393,8 @@ function forceAnalysis(input = {}, metadata = {}) {
       ? modelMarketType
       : inferredMarketType;
 
-  let signal = forceDirectionalSignal(analysis);
   let aiScore = clampScore(analysis.ai_score);
-
-  if (signal !== "NEUTRAL" && aiScore < 58) {
-    aiScore = 58;
-  }
+  let signal = forceDirectionalSignal(analysis);
 
   const entryPrices = extractPrices(analysis.entry_zone);
   const stopPrices = extractPrices(analysis.stop_loss);
@@ -280,8 +407,9 @@ function forceAnalysis(input = {}, metadata = {}) {
   let stopPrice = stopPrices.length ? stopPrices[0] : null;
   let tp1Price = tp1Prices.length ? tp1Prices[0] : null;
   let tp2Price = tp2Prices.length ? tp2Prices[0] : null;
-
-  const invalidationPrice = invalidationPrices.length ? invalidationPrices[0] : null;
+  const invalidationPrice = invalidationPrices.length
+    ? invalidationPrices[0]
+    : null;
 
   if (!stopPrice && invalidationPrice) {
     stopPrice = invalidationPrice;
@@ -329,53 +457,61 @@ function forceAnalysis(input = {}, metadata = {}) {
 
   const fallbackEntry =
     signal === "BUY"
-      ? `BUY condicional en ${marketLabel}: esperar retroceso hacia zona de demanda/soporte o ruptura alcista con retesteo confirmado.`
+      ? `BUY condicional en ${marketLabel}: buscar entrada en retroceso hacia zona de demanda/soporte o tras ruptura y retesteo confirmado.`
       : signal === "SELL"
-      ? `SELL condicional en ${marketLabel}: esperar retroceso hacia zona de oferta/resistencia o ruptura bajista con retesteo confirmado.`
+      ? `SELL condicional en ${marketLabel}: buscar entrada en retroceso hacia zona de oferta/resistencia o tras ruptura bajista y retesteo confirmado.`
       : `NO TRADE en ${marketLabel}: esperar ruptura clara, rechazo institucional o dirección definida antes de operar.`;
+
+  if (signal !== "NEUTRAL" && aiScore < 58) {
+    aiScore = 58;
+  }
 
   return {
     market_type: marketType,
     symbol: symbol || "UNKNOWN",
-
     signal,
-
     confidence: normalizeConfidence(analysis.confidence, aiScore),
     ai_score: aiScore,
-    setup_quality: normalizeSetupQuality(analysis.setup_quality, aiScore, signal),
+    setup_quality: normalizeSetupQuality(
+      analysis.setup_quality,
+      aiScore,
+      signal
+    ),
     risk_level: normalizeRiskLevel(analysis.risk_level, aiScore),
 
     market_context: badValue(analysis.market_context)
       ? `Contexto ${marketLabel}: lectura basada en estructura visible, zonas de reacción, liquidez y dirección probable.`
-      : String(analysis.market_context),
+      : analysis.market_context,
 
     trend: badValue(analysis.trend)
       ? "Tendencia evaluada por estructura reciente, máximos/mínimos y reacción del precio."
-      : String(analysis.trend),
+      : analysis.trend,
 
     liquidity_reading: badValue(analysis.liquidity_reading)
-      ? "Liquidez evaluada en máximos/mínimos recientes, barridas, soportes, resistencias y reacción institucional."
-      : String(analysis.liquidity_reading),
+      ? "Liquidez evaluada en máximos/mínimos recientes, zonas de barrida, soportes, resistencias y reacción institucional."
+      : analysis.liquidity_reading,
 
-    entry_zone: badValue(analysis.entry_zone) ? fallbackEntry : String(analysis.entry_zone),
+    entry_zone: badValue(analysis.entry_zone)
+      ? fallbackEntry
+      : normalizePriceField(analysis.entry_zone, symbol, marketType),
 
     stop_loss: badValue(analysis.stop_loss)
       ? stopPrice
         ? formatPrice(stopPrice, symbol, marketType)
-        : "Stop técnico detrás de la zona de invalidación estructural más cercana."
-      : String(analysis.stop_loss),
+        : "Stop técnico detrás de la zona de invalidación estructural."
+      : normalizePriceField(analysis.stop_loss, symbol, marketType),
 
     take_profit_1: badValue(analysis.take_profit_1)
       ? tp1Price
         ? formatPrice(tp1Price, symbol, marketType)
         : "TP1 en la primera zona lógica de reacción a favor del movimiento."
-      : String(analysis.take_profit_1),
+      : normalizePriceField(analysis.take_profit_1, symbol, marketType),
 
     take_profit_2: badValue(analysis.take_profit_2)
       ? tp2Price
         ? formatPrice(tp2Price, symbol, marketType)
         : "TP2 en la siguiente zona de liquidez o extensión del movimiento."
-      : String(analysis.take_profit_2),
+      : normalizePriceField(analysis.take_profit_2, symbol, marketType),
 
     invalidation_zone: badValue(analysis.invalidation_zone)
       ? stopPrice
@@ -385,7 +521,7 @@ function forceAnalysis(input = {}, metadata = {}) {
             marketType
           )}.`
         : "Invalidación si el precio rompe contra la estructura que justifica la operación."
-      : String(analysis.invalidation_zone),
+      : normalizePriceField(analysis.invalidation_zone, symbol, marketType),
 
     confirmation: badValue(analysis.confirmation)
       ? signal === "BUY"
@@ -393,7 +529,7 @@ function forceAnalysis(input = {}, metadata = {}) {
         : signal === "SELL"
         ? "Confirmar SELL con rechazo bajista, ruptura válida, BOS/CHoCH o retesteo limpio antes de ejecutar."
         : "Esperar confirmación clara antes de operar."
-      : String(analysis.confirmation),
+      : analysis.confirmation,
 
     execution_trigger: badValue(analysis.execution_trigger)
       ? signal === "BUY"
@@ -401,51 +537,83 @@ function forceAnalysis(input = {}, metadata = {}) {
         : signal === "SELL"
         ? "Ejecutar SELL solo si aparece vela de intención bajista, rechazo fuerte o retesteo confirmado."
         : "No ejecutar hasta que el mercado defina dirección."
-      : String(analysis.execution_trigger),
+      : analysis.execution_trigger,
 
     missing_confirmation: badValue(analysis.missing_confirmation)
       ? "Falta una confirmación clara de desplazamiento, rechazo, ruptura o retesteo."
-      : String(analysis.missing_confirmation),
+      : analysis.missing_confirmation,
 
     no_trade_condition: badValue(analysis.no_trade_condition)
       ? "No operar si el precio queda lateral, sin volumen, sin reacción clara o rompe la invalidación."
-      : String(analysis.no_trade_condition),
+      : analysis.no_trade_condition,
 
     reading: badValue(analysis.reading)
       ? "Lectura técnica construida desde tendencia, estructura, liquidez, zonas de reacción y gestión de riesgo."
-      : String(analysis.reading),
+      : analysis.reading,
 
     institutional_summary: badValue(analysis.institutional_summary)
       ? "El setup debe tratarse como condicional. La entrada solo es válida si el precio confirma la dirección esperada."
-      : String(analysis.institutional_summary),
+      : analysis.institutional_summary,
 
     risk_note: badValue(analysis.risk_note)
       ? "Usar riesgo controlado. No perseguir el precio. Ejecutar solo con confirmación y stop definido."
-      : String(analysis.risk_note),
+      : analysis.risk_note,
   };
 }
 
-function buildInstitutionalPrompt({ marketType, symbol, mode, strategy }) {
+function buildInstitutionalPrompt({
+  marketType = "UNKNOWN",
+  symbol = "UNKNOWN",
+} = {}) {
+  const cleanMarketType = normalizeMarketType(marketType);
+  const cleanSymbol = normalizeText(symbol || "UNKNOWN").toUpperCase();
+
   return `
 Eres TradeMind AI, un motor institucional multi-mercado para análisis técnico profesional.
 
-Mercado declarado: ${marketType}
-Símbolo declarado: ${symbol}
-Modo de análisis: ${mode}
-Estrategia elegida por el usuario: ${strategy}
+Mercado declarado: ${cleanMarketType}
+Símbolo declarado: ${cleanSymbol}
 
 OBJETIVO:
 Analizar el screenshot del gráfico y devolver un plan técnico accionable para traders de futuros, forex, crypto o acciones.
 
 PERSONALIDAD OPERATIVA:
 - Trader institucional.
-- Agresivo pero lógico.
+- Agresivo, pero lógico.
 - No conservador en exceso.
 - No genérico.
 - No educativo.
 - No inventes certeza absoluta.
 - Construye escenarios operables cuando exista estructura razonable.
 
+REGLA CRÍTICA DE PRECISIÓN DE PRECIOS:
+- Si el mercado es FOREX, devuelve precios con 5 decimales exactos. Ejemplo correcto: 1.15771. Ejemplo incorrecto: 1.1577.
+- Si el par contiene JPY, devuelve 3 decimales. Ejemplo correcto: 156.245.
+- Si es XAUUSD o XAGUSD, devuelve 2 decimales.
+- Si es FUTURES como MNQ, NQ, ES o MES, devuelve precios con 2 decimales.
+- Nunca redondees visualmente los precios.
+- Lee los precios del eje derecho del gráfico y usa niveles visibles reales.
+- No inventes números redondos como 1.1550 o 1.1530 si el gráfico muestra niveles más precisos.
+- La entrada, stop loss, take profit 1 y take profit 2 deben ser precios numéricos concretos siempre que el gráfico tenga una escala visible.
+- Si el precio actual se ve en el gráfico, úsalo como referencia para que la entrada tenga sentido con la zona actual del mercado.
+REGLA CRÍTICA DE CALIDAD OPERATIVA:
+- No propongas una entrada simplemente por estar cerca del precio actual.
+- La entrada debe estar basada en una zona técnica real: resistencia, soporte, order block, supply/demand, ruptura + retesteo, sweep de liquidez o rechazo visible.
+- Si la entrada está demasiado lejos o el precio ya se movió demasiado, marca la entrada como condicional.
+- Para SELL:
+  - La entrada debe estar cerca de resistencia, retroceso, retesteo bajista o rechazo.
+  - El stop debe ir por encima del máximo/rechazo/zona de invalidación.
+  - TP1 debe buscar mínimo la primera zona lógica de liquidez.
+  - TP2 debe buscar una extensión razonable o siguiente soporte.
+- Para BUY:
+  - La entrada debe estar cerca de soporte, retroceso, retesteo alcista o rechazo.
+  - El stop debe ir por debajo del mínimo/rechazo/zona de invalidación.
+  - TP1 debe buscar mínimo la primera zona lógica de liquidez.
+  - TP2 debe buscar una extensión razonable o siguiente resistencia.
+- No des operaciones con TP demasiado pequeño si el riesgo no justifica la entrada.
+- Antes de devolver BUY o SELL, valida que exista una relación riesgo/beneficio lógica.
+- Si la operación no ofrece al menos una estructura razonable cercana a 1:1 hacia TP1, baja la confianza o marca setup_quality como C.
+- Si el precio está en medio del rango sin ventaja clara, usa NEUTRAL o entrada condicional.
 REGLA CRÍTICA SOBRE NEUTRAL:
 - NEUTRAL solo está permitido si el gráfico está lateral, ilegible, sin dirección, sin estructura o sin zona técnica.
 - Si existe tendencia, ruptura, retroceso, rechazo, liquidez, soporte/resistencia, BOS, CHoCH o zona de reacción, debes elegir BUY o SELL.
@@ -453,11 +621,13 @@ REGLA CRÍTICA SOBRE NEUTRAL:
 
 MERCADOS:
 FUTURES:
-- Prioriza MNQ/NQ/ES/MES, sesión de New York, premarket, overnight high/low, liquidez, rupturas falsas, retesteos, impulso y VWAP si aparece.
+- Prioriza MNQ/NQ/ES/MES, sesión de New York, premarket, overnight high/low, liquidez, rupturas falsas, retesteos, impulso, VWAP si aparece.
 
 FOREX:
 - Prioriza London/New York, liquidity sweep, BOS, CHoCH, order blocks, supply/demand, zonas psicológicas, spreads y confirmación.
 - No uses lógica exclusiva de futuros en forex.
+- Para EURUSD, GBPUSD, AUDUSD, NZDUSD y pares similares, usa 5 decimales.
+- Para pares JPY usa 3 decimales.
 
 CRYPTO:
 - Prioriza volatilidad, manipulación, barridas, soporte/resistencia, estructura y zonas de reacción.
@@ -476,162 +646,150 @@ REGLAS ABSOLUTAS:
 11. TP2 debe ser extensión o siguiente zona de liquidez.
 12. ai_score debe reflejar calidad real del setup.
 13. setup_quality NO TRADE solo si realmente no hay operación válida.
+14. entry_zone, stop_loss, take_profit_1 y take_profit_2 deben respetar la cantidad de decimales del mercado.
+15. No devuelvas precios incompletos.,
+16. La entrada no debe ser un número inventado; debe tener sentido con la estructura visible.
+17. El stop loss debe invalidar la idea, no solo estar cerca del precio.
+18. TP1 y TP2 deben estar a favor del movimiento y en zonas lógicas.
+19. No fuerces operaciones si el precio está en una zona de mala entrada.
+20. Si el precio ya llegó tarde al movimiento, explica que se debe esperar retroceso o nueva confirmación.
 
-Devuelve exactamente este JSON:
-
-{
-  "market_type": "FUTURES | FOREX | CRYPTO | STOCKS | UNKNOWN",
-  "symbol": "${symbol}",
-  "signal": "BUY | SELL | NEUTRAL",
-  "confidence": "Alta | Media | Baja",
-  "ai_score": 0,
-  "setup_quality": "A | B | C | NO TRADE",
-  "risk_level": "Bajo | Medio | Alto",
-  "market_context": "Contexto general del mercado",
-  "trend": "Lectura de tendencia",
-  "liquidity_reading": "Lectura de liquidez",
-  "entry_zone": "Zona o condición exacta de entrada",
-  "stop_loss": "Nivel o zona exacta de stop loss",
-  "take_profit_1": "Primer objetivo técnico",
-  "take_profit_2": "Segundo objetivo técnico",
-  "invalidation_zone": "Zona donde la idea queda invalidada",
-  "confirmation": "Qué debe pasar antes de entrar",
-  "execution_trigger": "Trigger exacto de ejecución",
-  "missing_confirmation": "Qué confirmación falta si aún no es entrada válida",
-  "no_trade_condition": "Cuándo NO operar",
-  "reading": "Lectura técnica breve y profesional",
-  "institutional_summary": "Resumen institucional final",
-  "risk_note": "Nota clara de gestión de riesgo"
-}
+Responde únicamente con el JSON solicitado por el sistema.
 `;
 }
 
+function getFallbackResponse(req, message = "No se pudo completar el análisis.") {
+  return {
+    ok: false,
+    engine: ENGINE_VERSION,
+    error: message,
+    analysis: forceAnalysis(
+      {},
+      {
+        marketType: req.body?.marketType,
+        symbol: req.body?.symbol,
+      }
+    ),
+  };
+}
+
 app.get("/", (req, res) => {
-  return res.json({
+  res.json({
     ok: true,
     message: "TradeMind AI Backend Running",
     engine: ENGINE_VERSION,
-    version: "5.0.0",
+    version: "3.1.0",
     model: OPENAI_MODEL,
+    markets: ["FUTURES", "FOREX", "CRYPTO", "STOCKS"],
   });
 });
 
-app.post("/analyze-chart", upload.any(), async (req, res) => {
+app.post("/analyze-chart", upload.single("chart"), async (req, res) => {
   try {
+    if (!process.env.OPENAI_API_KEY) {
+      return res
+        .status(500)
+        .json(getFallbackResponse(req, "OPENAI_API_KEY no configurada."));
+    }
+
+    if (!req.file) {
+      return res
+        .status(400)
+        .json(getFallbackResponse(req, "No se recibió imagen."));
+    }
+
+    const marketType =
+      req.body?.marketType || req.body?.market_type || "UNKNOWN";
+
+    const symbol = req.body?.symbol || "UNKNOWN";
+
+    const normalizedMarketType =
+      normalizeMarketType(marketType) !== "UNKNOWN"
+        ? normalizeMarketType(marketType)
+        : inferMarketTypeFromSymbol(symbol);
+
+    const base64Image = req.file.buffer.toString("base64");
+
+    const prompt = buildInstitutionalPrompt({
+      marketType: normalizedMarketType,
+      symbol,
+    });
+
     console.log("====================================");
     console.log("🔥 NUEVO ANÁLISIS TRADEMIND AI");
     console.log("ENGINE:", ENGINE_VERSION);
     console.log("MODEL:", OPENAI_MODEL);
-    console.log("BODY:", req.body);
-    console.log("FILES:", req.files?.map((f) => f.fieldname));
+    console.log("MARKET:", normalizedMarketType);
+    console.log("SYMBOL:", symbol);
+    console.log("FILE SIZE:", req.file.size);
     console.log("====================================");
 
-    if (!process.env.OPENAI_API_KEY) {
-      return res.status(500).json({
-        ok: false,
-        error: "OPENAI_API_KEY no configurada.",
-        analysis: forceAnalysis({}, req.body),
-      });
-    }
-
-    const uploadedFile =
-      req.files?.find((file) => file.fieldname === "chart") ||
-      req.files?.find((file) => file.fieldname === "image") ||
-      req.files?.[0];
-
-    if (!uploadedFile) {
-      return res.status(400).json({
-        ok: false,
-        error: "No se recibió imagen del gráfico.",
-        analysis: forceAnalysis({}, req.body),
-      });
-    }
-
-    const symbol = normalizeText(req.body?.symbol || req.body?.market || "UNKNOWN").toUpperCase();
-
-    const marketType =
-      normalizeMarketType(req.body?.marketType) !== "UNKNOWN"
-        ? normalizeMarketType(req.body?.marketType)
-        : inferMarketTypeFromSymbol(symbol);
-
-    const mode = normalizeText(req.body?.mode || "Automático");
-    const strategy = normalizeText(req.body?.strategy || "General");
-
-    const base64Image = uploadedFile.buffer.toString("base64");
-
-    const prompt = buildInstitutionalPrompt({
-      marketType,
-      symbol,
-      mode,
-      strategy,
-    });
-
-    const completion = await client.chat.completions.create({
+    const response = await client.responses.create({
       model: OPENAI_MODEL,
-      temperature: 0.35,
-      max_tokens: 1400,
-      response_format: { type: "json_object" },
-      messages: [
-        {
-          role: "system",
-          content: prompt,
+      max_output_tokens: 1300,
+      temperature: 0.28,
+      text: {
+        format: {
+          type: "json_schema",
+          name: "trademind_chart_analysis",
+          strict: true,
+          schema: ANALYSIS_SCHEMA,
         },
+      },
+      input: [
         {
           role: "user",
           content: [
             {
-              type: "text",
-              text: "Analiza este gráfico y devuelve únicamente JSON válido.",
+              type: "input_text",
+              text: prompt,
             },
             {
-              type: "image_url",
-              image_url: {
-                url: `data:${uploadedFile.mimetype || "image/jpeg"};base64,${base64Image}`,
-              },
+              type: "input_image",
+              image_url: `data:${
+                req.file.mimetype || "image/jpeg"
+              };base64,${base64Image}`,
             },
           ],
         },
       ],
     });
 
-    const rawText = completion.choices?.[0]?.message?.content || "";
-    const parsed = safeJsonParse(rawText);
-
-    const finalAnalysis = forceAnalysis(parsed, {
-      marketType,
-      symbol,
-    });
+    const rawText = response.output_text || "";
+    const parsedAnalysis = safeJsonParse(rawText);
 
     console.log("======== RAW OPENAI ========");
     console.log(rawText);
+
+    console.log("======== PARSED ========");
+    console.log(parsedAnalysis);
+
+    const finalAnalysis = forceAnalysis(parsedAnalysis, {
+      marketType: normalizedMarketType,
+      symbol,
+    });
+
     console.log("======== FINAL ANALYSIS ========");
     console.log(finalAnalysis);
 
     return res.json({
       ok: true,
       engine: ENGINE_VERSION,
-      version: "5.0.0",
       model: OPENAI_MODEL,
-      symbol,
-      marketType,
-      mode,
-      strategy,
       analysis: finalAnalysis,
     });
   } catch (error) {
     console.error("🔥 Error en /analyze-chart");
+    console.error("STATUS:", error.status);
     console.error("MESSAGE:", error.message);
     console.error("DETAILS:", error.response?.data || error);
 
-    return res.status(500).json({
-      ok: false,
-      engine: ENGINE_VERSION,
-      error: error.message || "Error interno en análisis.",
-      analysis: forceAnalysis({}, req.body),
-    });
+    return res
+      .status(500)
+      .json(getFallbackResponse(req, "Error interno en análisis."));
   }
 });
 
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`${ENGINE_VERSION} corriendo en puerto ${PORT}`);
+  console.log(`🔥 ${ENGINE_VERSION} corriendo en puerto ${PORT}`);
 });
