@@ -25,6 +25,10 @@ const client = new OpenAI({
 const PORT = process.env.PORT || 3000;
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
 
+const TWELVE_DATA_API_KEY = process.env.TWELVE_DATA_API_KEY;
+
+const DATABENTO_API_KEY = process.env.DATABENTO_API_KEY;
+
 const ENGINE_VERSION = "trademind-institutional-v3.1-premium";
 
 const ANALYSIS_SCHEMA = {
