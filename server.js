@@ -687,7 +687,30 @@ app.get("/", (req, res) => {
     markets: ["FUTURES", "FOREX", "CRYPTO", "STOCKS"],
   });
 });
+async function getForexData(symbol) {
+  try {
+    const response = await fetch(
+      `https://api.twelvedata.com/time_series?symbol=${symbol}&interval=1h&outputsize=100&apikey=${TWELVE_DATA_API_KEY}`
+    );
 
+    const data = await response.json();
+
+    if (!data.values) {
+      throw new Error(
+        `No se pudieron obtener datos para ${symbol}`
+      );
+    }
+
+    return data.values;
+  } catch (error) {
+    console.error(
+      'Error obteniendo datos de Twelve Data:',
+      error
+    );
+
+    return null;
+  }
+}
 app.post("/analyze-chart", upload.single("chart"), async (req, res) => {
   try {
     if (!process.env.OPENAI_API_KEY) {
