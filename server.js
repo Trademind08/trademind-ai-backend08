@@ -735,7 +735,10 @@ const formattedSymbol =
         `No se pudieron obtener datos para ${symbol}`
       );
     }
-
+console.log("📈 DATOS DE TWELVE DATA:");
+console.log("Símbolo:", symbol);
+console.log("Velas recibidas:", data.values.length);
+console.log("Última vela:", data.values[0]);
     return data.values;
   } catch (error) {
     console.error(
