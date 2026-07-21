@@ -564,20 +564,45 @@ function forceAnalysis(input = {}, metadata = {}) {
       : analysis.risk_note,
   };
 }
-
 function buildInstitutionalPrompt({
   marketType = "UNKNOWN",
   symbol = "UNKNOWN",
+  marketContext = null,
 } = {}) {
+
   const cleanMarketType = normalizeMarketType(marketType);
   const cleanSymbol = normalizeText(symbol || "UNKNOWN").toUpperCase();
+const formattedMarketContext =
+  Array.isArray(marketContext) && marketContext.length > 0
+    ? marketContext
+        .slice(0, 100)
+        .map((candle) => ({
+          datetime: candle.datetime,
+          open: candle.open,
+          high: candle.high,
+          low: candle.low,
+          close: candle.close,
+        }))
+    : null;
 
+const marketContextText = formattedMarketContext
+  ? JSON.stringify(formattedMarketContext)
+  : "DATOS DE MERCADO NO DISPONIBLES";
   return `
 Eres TradeMind AI, un motor institucional multi-mercado para análisis técnico profesional.
 
 Mercado declarado: ${cleanMarketType}
 Símbolo declarado: ${cleanSymbol}
+DATOS REALES DEL MERCADO:
+${marketContextText}
 
+REGLAS PARA USAR LOS DATOS REALES:
+- Los datos están ordenados desde la vela más reciente hacia las anteriores.
+- Usa estos datos para confirmar tendencia, máximos, mínimos, impulso, retrocesos y volatilidad.
+- Cruza el contexto histórico con la imagen enviada.
+- Si existe contradicción entre la imagen y los datos reales, reduce la confianza.
+- No inventes precios fuera del rango razonable observado.
+- Prioriza siempre la estructura visible del gráfico y utiliza los datos históricos como confirmación.
 OBJETIVO:
 Analizar el screenshot del gráfico y devolver un plan técnico accionable para traders de futuros, forex, crypto o acciones.
 
@@ -689,6 +714,16 @@ app.get("/", (req, res) => {
 });
 async function getForexData(symbol) {
   try {
+    const cleanSymbol = symbol
+  .toString()
+  .trim()
+  .toUpperCase()
+  .replace("/", "");
+
+const formattedSymbol =
+  cleanSymbol.length === 6
+    ? `${cleanSymbol.substring(0, 3)}/${cleanSymbol.substring(3, 6)}`
+    : cleanSymbol;
     const response = await fetch(
       `https://api.twelvedata.com/time_series?symbol=${symbol}&interval=1h&outputsize=100&apikey=${TWELVE_DATA_API_KEY}`
     );
