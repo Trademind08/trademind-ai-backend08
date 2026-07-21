@@ -734,13 +734,28 @@ app.post("/analyze-chart", upload.single("chart"), async (req, res) => {
       normalizeMarketType(marketType) !== "UNKNOWN"
         ? normalizeMarketType(marketType)
         : inferMarketTypeFromSymbol(symbol);
+let marketContext = null;
 
+if (normalizedMarketType === "FOREX") {
+  marketContext = await getForexData(symbol);
+}
+
+if (normalizedMarketType === "FUTURES") {
+  // Próximamente conectaremos Databento.
+  marketContext = null;
+}
+
+if (normalizedMarketType === "CRYPTO") {
+  // Próximamente conectaremos el proveedor cripto.
+  marketContext = null;
+}
     const base64Image = req.file.buffer.toString("base64");
-
-    const prompt = buildInstitutionalPrompt({
-      marketType: normalizedMarketType,
-      symbol,
-    });
+const prompt = buildInstitutionalPrompt({
+  marketType: normalizedMarketType,
+  symbol,
+  marketContext,
+});
+   
 
     console.log("====================================");
     console.log("🔥 NUEVO ANÁLISIS TRADEMIND AI");
