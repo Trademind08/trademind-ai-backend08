@@ -593,8 +593,15 @@ Eres TradeMind AI, un motor institucional multi-mercado para análisis técnico 
 
 Mercado declarado: ${cleanMarketType}
 Símbolo declarado: ${cleanSymbol}
-DATOS REALES DEL MERCADO:
-${marketContextText}
+DATOS DE MERCADO EN TIEMPO REAL:
+
+${marketContext
+  ? JSON.stringify(
+      marketContext.slice(0, 10),
+      null,
+      2
+    )
+  : "No disponibles"}
 
 REGLAS PARA USAR LOS DATOS REALES:
 - Los datos están ordenados desde la vela más reciente hacia las anteriores.
