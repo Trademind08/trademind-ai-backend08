@@ -715,34 +715,44 @@ app.get("/", (req, res) => {
 async function getForexData(symbol) {
   try {
     const cleanSymbol = symbol
-  .toString()
-  .trim()
-  .toUpperCase()
-  .replace("/", "");
+      .toString()
+      .trim()
+      .toUpperCase()
+      .replaceAll("/", "")
+      .replaceAll(" ", "");
 
-const formattedSymbol =
-  cleanSymbol.length === 6
-    ? `${cleanSymbol.substring(0, 3)}/${cleanSymbol.substring(3, 6)}`
-    : cleanSymbol;
+    const formattedSymbol =
+      cleanSymbol.length === 6
+        ? `${cleanSymbol.substring(0, 3)}/${cleanSymbol.substring(3, 6)}`
+        : cleanSymbol;
+
     const response = await fetch(
-      `https://api.twelvedata.com/time_series?symbol=${symbol}&interval=1h&outputsize=100&apikey=${TWELVE_DATA_API_KEY}`
+      `https://api.twelvedata.com/time_series` +
+        `?symbol=${encodeURIComponent(formattedSymbol)}` +
+        `&interval=1h` +
+        `&outputsize=100` +
+        `&apikey=${TWELVE_DATA_API_KEY}`
     );
 
     const data = await response.json();
 
-    if (!data.values) {
+    if (!response.ok || !Array.isArray(data.values)) {
       throw new Error(
-        `No se pudieron obtener datos para ${symbol}`
+        data?.message ||
+          `No se pudieron obtener datos para ${formattedSymbol}`
       );
     }
-console.log("📈 DATOS DE TWELVE DATA:");
-console.log("Símbolo:", symbol);
-console.log("Velas recibidas:", data.values.length);
-console.log("Última vela:", data.values[0]);
+
+    console.log("📈 DATOS DE TWELVE DATA:");
+    console.log("Símbolo recibido:", symbol);
+    console.log("Símbolo enviado:", formattedSymbol);
+    console.log("Velas recibidas:", data.values.length);
+    console.log("Última vela:", data.values[0]);
+
     return data.values;
   } catch (error) {
     console.error(
-      'Error obteniendo datos de Twelve Data:',
+      "Error obteniendo datos de Twelve Data:",
       error
     );
 
