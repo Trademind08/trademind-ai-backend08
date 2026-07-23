@@ -810,7 +810,9 @@ async function getFuturesData(symbol) {
       databentoSymbol
     );
 
-  const end = new Date();
+ const end = new Date(
+  Date.now() - 60 * 60 * 1000
+);
 
 const start = new Date(
   end.getTime() - 7 * 24 * 60 * 60 * 1000
