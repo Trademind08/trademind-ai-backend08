@@ -766,6 +766,30 @@ async function getForexData(symbol) {
     return null;
   }
 }
+function mapDatabentoFutureSymbol(symbol) {
+  const cleanSymbol = String(symbol || "")
+    .trim()
+    .toUpperCase()
+    .replaceAll("/", "")
+    .replaceAll(" ", "");
+
+  const supportedSymbols = {
+    MNQ: "MNQ.v.0",
+    NQ: "NQ.v.0",
+    MES: "MES.v.0",
+    ES: "ES.v.0",
+    MYM: "MYM.v.0",
+    YM: "YM.v.0",
+    M2K: "M2K.v.0",
+    RTY: "RTY.v.0",
+    MGC: "MGC.v.0",
+    GC: "GC.v.0",
+    MCL: "MCL.v.0",
+    CL: "CL.v.0",
+  };
+
+  return supportedSymbols[cleanSymbol] || null;
+}
 app.post("/analyze-chart", upload.single("chart"), async (req, res) => {
   try {
     if (!process.env.OPENAI_API_KEY) {
