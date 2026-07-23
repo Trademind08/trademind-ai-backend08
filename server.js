@@ -595,14 +595,13 @@ Mercado declarado: ${cleanMarketType}
 Símbolo declarado: ${cleanSymbol}
 DATOS DE MERCADO EN TIEMPO REAL:
 
-${marketContext
+${Array.isArray(marketContext)
   ? JSON.stringify(
       marketContext.slice(0, 10),
       null,
       2
     )
   : "No disponibles"}
-
 REGLAS PARA USAR LOS DATOS REALES:
 - Los datos están ordenados desde la vela más reciente hacia las anteriores.
 - Usa estos datos para confirmar tendencia, máximos, mínimos, impulso, retrocesos y volatilidad.
