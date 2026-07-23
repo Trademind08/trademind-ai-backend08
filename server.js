@@ -846,7 +846,9 @@ async function getFuturesData(symbol) {
       "Respuesta Databento:"
     );
 
-    console.log(data);
+   console.dir(data, {
+  depth: null,
+});
 
     return data;
   } catch (error) {
