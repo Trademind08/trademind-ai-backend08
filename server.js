@@ -889,8 +889,7 @@ if (normalizedMarketType === "FOREX") {
 }
 
 if (normalizedMarketType === "FUTURES") {
-  // Próximamente conectaremos Databento.
-  marketContext = null;
+  marketContext = await getFuturesData(symbol);
 }
 
 if (normalizedMarketType === "CRYPTO") {
