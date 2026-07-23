@@ -810,9 +810,13 @@ async function getFuturesData(symbol) {
       databentoSymbol
     );
 
- const end = new Date(
-  Date.now() - 60 * 60 * 1000
-);
+const end = new Date();
+
+// Retrocedemos una hora para trabajar solo con velas ya cerradas.
+end.setUTCHours(end.getUTCHours() - 1);
+
+// Eliminamos minutos, segundos y milisegundos.
+end.setUTCMinutes(0, 0, 0);
 
 const start = new Date(
   end.getTime() - 7 * 24 * 60 * 60 * 1000
