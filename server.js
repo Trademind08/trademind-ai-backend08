@@ -790,6 +790,75 @@ function mapDatabentoFutureSymbol(symbol) {
 
   return supportedSymbols[cleanSymbol] || null;
 }
+async function getFuturesData(symbol) {
+  try {
+    const databentoSymbol =
+      mapDatabentoFutureSymbol(symbol);
+
+    if (!databentoSymbol) {
+      console.log(
+        "⚠️ Símbolo no soportado:",
+        symbol
+      );
+
+      return null;
+    }
+
+    console.log("📈 DATOS DE DATABENTO:");
+    console.log("Símbolo recibido:", symbol);
+    console.log(
+      "Símbolo convertido:",
+      databentoSymbol
+    );
+
+    const response = await fetch(
+      "https://hist.databento.com/v0/timeseries.get_range",
+      {
+        method: "POST",
+
+        headers: {
+          Authorization:
+            "Basic " +
+            Buffer.from(
+              `${DATABENTO_API_KEY}:`
+            ).toString("base64"),
+
+          "Content-Type":
+            "application/json",
+        },
+
+        body: JSON.stringify({
+          dataset: "GLBX.MDP3",
+
+          schema: "ohlcv-1h",
+
+          stype_in: "continuous",
+
+          symbols: [databentoSymbol],
+
+          limit: 100,
+        }),
+      }
+    );
+
+    const data = await response.json();
+
+    console.log(
+      "Respuesta Databento:"
+    );
+
+    console.log(data);
+
+    return data;
+  } catch (error) {
+    console.error(
+      "❌ Error Databento:",
+      error
+    );
+
+    return null;
+  }
+}
 app.post("/analyze-chart", upload.single("chart"), async (req, res) => {
   try {
     if (!process.env.OPENAI_API_KEY) {
