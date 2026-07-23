@@ -810,35 +810,43 @@ async function getFuturesData(symbol) {
       databentoSymbol
     );
 
-    const response = await fetch(
-      "https://hist.databento.com/v0/timeseries.get_range",
-      {
-        method: "POST",
+  const end = new Date();
 
-        headers: {
-          Authorization:
-            "Basic " +
-            Buffer.from(
-              `${DATABENTO_API_KEY}:`
-            ).toString("base64"),
+const start = new Date(
+  end.getTime() - 7 * 24 * 60 * 60 * 1000
+);
 
-          "Content-Type":
-            "application/json",
-        },
+const formData = new URLSearchParams();
 
-        body: JSON.stringify({
-          dataset: "GLBX.MDP3",
+formData.append("dataset", "GLBX.MDP3");
+formData.append("start", start.toISOString());
+formData.append("end", end.toISOString());
+formData.append("symbols", databentoSymbol);
+formData.append("schema", "ohlcv-1h");
+formData.append("stype_in", "continuous");
+formData.append("encoding", "json");
+formData.append("compression", "none");
+formData.append("limit", "100");
 
-          schema: "ohlcv-1h",
+const response = await fetch(
+  "https://hist.databento.com/v0/timeseries.get_range",
+  {
+    method: "POST",
 
-          stype_in: "continuous",
+    headers: {
+      Authorization:
+        "Basic " +
+        Buffer.from(
+          `${DATABENTO_API_KEY}:`
+        ).toString("base64"),
 
-          symbols: [databentoSymbol],
+      "Content-Type":
+        "application/x-www-form-urlencoded",
+    },
 
-          limit: 100,
-        }),
-      }
-    );
+    body: formData.toString(),
+  }
+);
 
     const data = await response.json();
 
