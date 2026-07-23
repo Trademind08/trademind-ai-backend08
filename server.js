@@ -860,12 +860,12 @@ async function getFuturesData(symbol) {
   }
 }
 app.post("/analyze-chart", upload.single("chart"), async (req, res) => {
+  console.log("🚨 SOLICITUD RECIBIDA EN /analyze-chart");
+  console.log("BODY:", req.body);
+  console.log("ARCHIVO RECIBIDO:", Boolean(req.file));
+  console.log("FECHA:", new Date().toISOString());
+
   try {
-    if (!process.env.OPENAI_API_KEY) {
-      return res
-        .status(500)
-        .json(getFallbackResponse(req, "OPENAI_API_KEY no configurada."));
-    }
 
     if (!req.file) {
       return res
