@@ -790,18 +790,141 @@ function mapDatabentoFutureSymbol(symbol) {
   return supportedSymbols[cleanSymbol] || null;
 }
 async function getFuturesData(symbol) {
+  const MAX_ATTEMPTS = 3;
+  const REQUEST_TIMEOUT_MS = 30000;
+  const DATABENTO_URL =
+    "https://hist.databento.com/v0/timeseries.get_range";
+
+  const wait = (milliseconds) =>
+    new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+  const normalizeDatabentoPrice = (value) => {
+    const numericValue = Number(value);
+
+    if (!Number.isFinite(numericValue)) {
+      return null;
+    }
+
+    /*
+     * Databento puede entregar precios con precisión fija 1e-9.
+     * Por ejemplo:
+     * 30950.25 puede llegar como 30950250000000.
+     */
+    if (Math.abs(numericValue) >= 100000000) {
+      return numericValue / 1000000000;
+    }
+
+    return numericValue;
+  };
+
+  const parseDatabentoResponse = (rawText) => {
+    const cleanText = String(rawText || "").trim();
+
+    if (!cleanText) {
+      return [];
+    }
+
+    /*
+     * Primero intentamos interpretar la respuesta como JSON tradicional.
+     */
+    try {
+      const parsed = JSON.parse(cleanText);
+
+      if (Array.isArray(parsed)) {
+        return parsed;
+      }
+
+      if (Array.isArray(parsed?.data)) {
+        return parsed.data;
+      }
+
+      if (Array.isArray(parsed?.records)) {
+        return parsed.records;
+      }
+
+      /*
+       * Si es un objeto de error de Databento, lo conservamos
+       * para mostrar el mensaje real.
+       */
+      if (parsed?.detail) {
+        const apiError = new Error(
+          parsed.detail?.message ||
+            parsed.detail?.case ||
+            "Databento rechazó la solicitud."
+        );
+
+        apiError.databentoResponse = parsed;
+        apiError.isDatabentoApiError = true;
+
+        throw apiError;
+      }
+
+      return [parsed];
+    } catch (error) {
+      if (error?.isDatabentoApiError) {
+        throw error;
+      }
+
+      /*
+       * La codificación JSON de datos de mercado puede llegar
+       * como JSON por líneas. Procesamos cada línea por separado.
+       */
+      const records = cleanText
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .map((line) => {
+          try {
+            return JSON.parse(line);
+          } catch (_) {
+            return null;
+          }
+        })
+        .filter(Boolean);
+
+      if (records.length > 0) {
+        return records;
+      }
+
+      throw new Error(
+        "La respuesta de Databento no contiene JSON válido."
+      );
+    }
+  };
+
   try {
+    if (!DATABENTO_API_KEY) {
+      console.error(
+        "❌ DATABENTO_API_KEY no está configurada en Render."
+      );
+
+      return null;
+    }
+
     const databentoSymbol =
       mapDatabentoFutureSymbol(symbol);
 
     if (!databentoSymbol) {
-      console.log(
-        "⚠️ Símbolo no soportado:",
+      console.warn(
+        "⚠️ Símbolo de futuros no soportado:",
         symbol
       );
 
       return null;
     }
+
+    /*
+     * Trabajamos con la última vela horaria completamente cerrada.
+     * Retrocedemos una hora y eliminamos minutos y segundos.
+     */
+    const end = new Date();
+
+    end.setUTCHours(end.getUTCHours() - 1);
+    end.setUTCMinutes(0, 0, 0);
+
+    const start = new Date(
+      end.getTime() - 7 * 24 * 60 * 60 * 1000
+    );
 
     console.log("📈 DATOS DE DATABENTO:");
     console.log("Símbolo recibido:", symbol);
@@ -809,65 +932,278 @@ async function getFuturesData(symbol) {
       "Símbolo convertido:",
       databentoSymbol
     );
+    console.log("Inicio solicitado:", start.toISOString());
+    console.log("Final solicitado:", end.toISOString());
 
-const end = new Date();
+    for (
+      let attempt = 1;
+      attempt <= MAX_ATTEMPTS;
+      attempt += 1
+    ) {
+      const controller = new AbortController();
 
-// Retrocedemos una hora para trabajar solo con velas ya cerradas.
-end.setUTCHours(end.getUTCHours() - 1);
+      const timeoutId = setTimeout(() => {
+        controller.abort();
+      }, REQUEST_TIMEOUT_MS);
 
-// Eliminamos minutos, segundos y milisegundos.
-end.setUTCMinutes(0, 0, 0);
+      try {
+        console.log(
+          `🔄 Intento Databento ${attempt}/${MAX_ATTEMPTS}`
+        );
 
-const start = new Date(
-  end.getTime() - 7 * 24 * 60 * 60 * 1000
-);
+        const formData = new URLSearchParams();
 
-const formData = new URLSearchParams();
+        formData.append("dataset", "GLBX.MDP3");
+        formData.append("start", start.toISOString());
+        formData.append("end", end.toISOString());
+        formData.append("symbols", databentoSymbol);
+        formData.append("schema", "ohlcv-1h");
+        formData.append("stype_in", "continuous");
+        formData.append("encoding", "json");
+        formData.append("compression", "none");
+        formData.append("limit", "100");
 
-formData.append("dataset", "GLBX.MDP3");
-formData.append("start", start.toISOString());
-formData.append("end", end.toISOString());
-formData.append("symbols", databentoSymbol);
-formData.append("schema", "ohlcv-1h");
-formData.append("stype_in", "continuous");
-formData.append("encoding", "json");
-formData.append("compression", "none");
-formData.append("limit", "100");
+        const response = await fetch(
+          DATABENTO_URL,
+          {
+            method: "POST",
 
-const response = await fetch(
-  "https://hist.databento.com/v0/timeseries.get_range",
-  {
-    method: "POST",
+            headers: {
+              Authorization:
+                "Basic " +
+                Buffer.from(
+                  `${DATABENTO_API_KEY}:`
+                ).toString("base64"),
 
-    headers: {
-      Authorization:
-        "Basic " +
-        Buffer.from(
-          `${DATABENTO_API_KEY}:`
-        ).toString("base64"),
+              "Content-Type":
+                "application/x-www-form-urlencoded",
 
-      "Content-Type":
-        "application/x-www-form-urlencoded",
-    },
+              Accept: "application/json",
+            },
 
-    body: formData.toString(),
-  }
-);
+            body: formData.toString(),
+            signal: controller.signal,
+          }
+        );
 
-    const data = await response.json();
+        clearTimeout(timeoutId);
 
-    console.log(
-      "Respuesta Databento:"
-    );
+        const rawResponse = await response.text();
 
-   console.dir(data, {
-  depth: null,
-});
+        if (!response.ok) {
+          let errorPayload = null;
 
-    return data;
+          try {
+            errorPayload = JSON.parse(rawResponse);
+          } catch (_) {
+            errorPayload = rawResponse;
+          }
+
+          console.error(
+            `❌ Databento respondió HTTP ${response.status}:`
+          );
+
+          console.dir(errorPayload, {
+            depth: null,
+          });
+
+          /*
+           * Solo reintentamos errores temporales:
+           * 408, 429 y errores del servidor.
+           */
+          const isRetryableStatus =
+            response.status === 408 ||
+            response.status === 429 ||
+            response.status >= 500;
+
+          if (
+            isRetryableStatus &&
+            attempt < MAX_ATTEMPTS
+          ) {
+            const retryAfterHeader =
+              response.headers.get("retry-after");
+
+            const retryAfterSeconds = Number(
+              retryAfterHeader
+            );
+
+            const delayMs =
+              Number.isFinite(retryAfterSeconds) &&
+              retryAfterSeconds > 0
+                ? retryAfterSeconds * 1000
+                : attempt * 2000;
+
+            console.log(
+              `⏳ Nuevo intento en ${
+                delayMs / 1000
+              } segundos...`
+            );
+
+            await wait(delayMs);
+            continue;
+          }
+
+          return null;
+        }
+
+        const records =
+          parseDatabentoResponse(rawResponse);
+
+        const candles = records
+          .map((record) => {
+            const datetimeValue =
+              record?.datetime ??
+              record?.ts_event ??
+              record?.timestamp ??
+              null;
+
+            const open =
+              normalizeDatabentoPrice(record?.open);
+
+            const high =
+              normalizeDatabentoPrice(record?.high);
+
+            const low =
+              normalizeDatabentoPrice(record?.low);
+
+            const close =
+              normalizeDatabentoPrice(record?.close);
+
+            const volume = Number(
+              record?.volume ?? 0
+            );
+
+            if (
+              open === null ||
+              high === null ||
+              low === null ||
+              close === null
+            ) {
+              return null;
+            }
+
+            return {
+              datetime: datetimeValue,
+              open,
+              high,
+              low,
+              close,
+              volume: Number.isFinite(volume)
+                ? volume
+                : 0,
+            };
+          })
+          .filter(Boolean)
+          .sort((a, b) => {
+            const timeA = new Date(
+              a.datetime
+            ).getTime();
+
+            const timeB = new Date(
+              b.datetime
+            ).getTime();
+
+            if (
+              !Number.isFinite(timeA) ||
+              !Number.isFinite(timeB)
+            ) {
+              return 0;
+            }
+
+            /*
+             * Más reciente primero, igual que Twelve Data.
+             */
+            return timeB - timeA;
+          });
+
+        if (candles.length === 0) {
+          throw new Error(
+            "Databento respondió, pero no se pudieron convertir las velas OHLCV."
+          );
+        }
+
+        console.log(
+          "✅ Velas recibidas de Databento:",
+          candles.length
+        );
+
+        console.log(
+          "Última vela cerrada:",
+          candles[0]
+        );
+
+        return candles;
+      } catch (error) {
+        clearTimeout(timeoutId);
+
+        const isTimeout =
+          error?.name === "AbortError" ||
+          error?.cause?.code ===
+            "UND_ERR_CONNECT_TIMEOUT" ||
+          error?.code ===
+            "UND_ERR_CONNECT_TIMEOUT";
+
+        const isTemporaryNetworkError =
+          isTimeout ||
+          error?.cause?.code ===
+            "ECONNRESET" ||
+          error?.cause?.code ===
+            "ENOTFOUND" ||
+          error?.cause?.code ===
+            "EAI_AGAIN";
+
+        console.error(
+          `❌ Falló el intento Databento ${attempt}/${MAX_ATTEMPTS}:`,
+          error?.message || error
+        );
+
+        if (
+          error?.databentoResponse
+        ) {
+          console.dir(
+            error.databentoResponse,
+            {
+              depth: null,
+            }
+          );
+        }
+
+        /*
+         * Los errores propios de validación de Databento
+         * no deben repetirse tres veces.
+         */
+        if (
+          error?.isDatabentoApiError &&
+          !isTemporaryNetworkError
+        ) {
+          return null;
+        }
+
+        if (attempt < MAX_ATTEMPTS) {
+          const delayMs = attempt * 2000;
+
+          console.log(
+            `⏳ Reintentando Databento en ${
+              delayMs / 1000
+            } segundos...`
+          );
+
+          await wait(delayMs);
+          continue;
+        }
+
+        console.error(
+          "❌ Databento no respondió después de 3 intentos."
+        );
+
+        return null;
+      }
+    }
+
+    return null;
   } catch (error) {
     console.error(
-      "❌ Error Databento:",
+      "❌ Error general obteniendo datos de Databento:",
       error
     );
 
