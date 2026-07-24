@@ -741,7 +741,30 @@ async function getForexData(symbol) {
     );
 
     const data = await response.json();
+    if (!response.ok || !Array.isArray(data.values)) {
+      throw new Error(
+        data?.message ||
+        `No se pudieron obtener datos para ${formattedSymbol}`
+      );
+    }
 
+    console.log("📈 DATOS DE TWELVE DATA:");
+    console.log("Símbolo recibido:", symbol);
+    console.log("Símbolo enviado:", formattedSymbol);
+    console.log("Velas recibidas:", data.values.length);
+    console.log("Última vela:", data.values[0]);
+
+    return data.values;
+
+  } catch (error) {
+    console.error(
+      "Error obteniendo datos de Twelve Data:",
+      error
+    );
+
+    return null;
+  }
+}
   
 function mapDatabentoFutureSymbol(symbol) {
   const cleanSymbol = String(symbol || "")
