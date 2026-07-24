@@ -742,29 +742,7 @@ async function getForexData(symbol) {
 
     const data = await response.json();
 
-    if (!response.ok || !Array.isArray(data.values)) {
-      throw new Error(
-        data?.message ||
-          `No se pudieron obtener datos para ${formattedSymbol}`
-      );
-    }
-
-    console.log("📈 DATOS DE TWELVE DATA:");
-    console.log("Símbolo recibido:", symbol);
-    console.log("Símbolo enviado:", formattedSymbol);
-    console.log("Velas recibidas:", data.values.length);
-    console.log("Última vela:", data.values[0]);
-
-    return data.values;
-  } catch (error) {
-    console.error(
-      "Error obteniendo datos de Twelve Data:",
-      error
-    );
-
-    return null;
-  }
-}
+  
 function mapDatabentoFutureSymbol(symbol) {
   const cleanSymbol = String(symbol || "")
     .trim()
@@ -990,62 +968,22 @@ async function getFuturesData(symbol) {
 
         const rawResponse = await response.text();
 
-     const availableEnd =
-  errorPayload?.detail?.payload?.available_end;
+        if (!response.ok) {
+          let errorPayload = null;
 
-const unavailableRangeCase =
-  errorPayload?.detail?.case ===
-  "dataset_unavailable_range";
+          try {
+            errorPayload = JSON.parse(rawResponse);
+          } catch (_) {
+            errorPayload = rawResponse;
+          }
 
-if (
-  response.status === 422 &&
-  unavailableRangeCase &&
-  availableEnd &&
-  attempt < MAX_ATTEMPTS
-) {
-  const availableEndDate = new Date(availableEnd);
+          console.error(
+            `❌ Databento respondió HTTP ${response.status}:`
+          );
 
-  if (!Number.isNaN(availableEndDate.getTime())) {
-    /*
-     * Databento trata el final como límite exclusivo.
-     * Retrocedemos un minuto para quedar dentro del rango permitido.
-     */
-    availableEndDate.setUTCMinutes(
-      availableEndDate.getUTCMinutes() - 1
-    );
-
-    end.setTime(availableEndDate.getTime());
-    end.setUTCSeconds(0, 0);
-
-    /*
-     * Recalculamos el inicio para mantener el rango de siete días.
-     */
-    start.setTime(
-      end.getTime() -
-        7 * 24 * 60 * 60 * 1000
-    );
-
-    console.log(
-      "⚙️ Databento limitó el rango disponible."
-    );
-
-    console.log(
-      "Nuevo final solicitado:",
-      end.toISOString()
-    );
-
-    console.log(
-      "Nuevo inicio solicitado:",
-      start.toISOString()
-    );
-
-    console.log(
-      `🔄 Reintentando automáticamente con el rango permitido.`
-    );
-
-    continue;
-  }
-}
+          console.dir(errorPayload, {
+            depth: null,
+          });
 
           /*
            * Solo reintentamos errores temporales:
